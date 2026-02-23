@@ -1,0 +1,8 @@
+.DS_Store
+.Rhistory
+.RData
+.Rproj.user/
+
+# grader-provided test data (do not commit)
+data/raw/test.csv
+
