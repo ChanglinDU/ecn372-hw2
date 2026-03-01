@@ -14,6 +14,8 @@ Your repo must then print **only** the test MSE to stdout (one line):
 MSE: 1234.56
 ```
 
+RMSE is also computed internally as \(\sqrt{\text{MSE}}\). It is **not printed** by `make evaluate` (to satisfy the grading requirement), but you can print it for your own inspection using `make metrics` (it prints RMSE to stderr).
+
 ## Environment
 
 - **R**: tested with R 4.4.x (should work with any modern R \(\ge\) 4.0)
@@ -33,6 +35,12 @@ make model-selection
 
 ```bash
 make evaluate
+```
+
+- **Optional: print RMSE too (for you, not the grader)**:
+
+```bash
+make metrics
 ```
 
 ### What `make evaluate` does
@@ -59,12 +67,13 @@ All code is in the `scripts/` folder and is intentionally split into:
 The submission uses **one** final model:
 
 - **Model**: ridge regression (linear model with L2 regularization)
-- **Target**: `shares`
+- **Target**: model is fit on `log(1 + shares)` and predictions are converted back to `shares` before computing MSE
+- **Back-transform**: uses \(\exp(\hat{y}) \cdot s - 1\), where \(s\) is a smearing factor estimated from training residuals on the log scale
 - **Final feature set**: all numeric predictors (excluding `url`) plus **squared (degree‑2) polynomial terms** for non-binary predictors
 - **Penalty**: \(\lambda = 10^{3.5} \approx 3162.28\)
 - **Seed**: 42 for reproducibility
 
-The penalty and feature set are chosen using **5-fold cross-validation** (run `make model-selection` to see the comparison table).
+The penalty and feature set are chosen using **5-fold cross-validation** (run `make model-selection` to see the comparison table). In CV, the model is fit on `log(1 + shares)` within each fold and the reported MSE is computed on the original `shares` scale after back-transforming predictions.
 
 ### Preprocessing (applied consistently to train and test)
 

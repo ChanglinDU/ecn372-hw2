@@ -148,3 +148,37 @@ This file documents how I used AI tools (Cursor Chat) while building this assign
   - Confirmed `Makefile` runs `Rscript` only.
 - Verification: Re-ran `make evaluate` (temporary test file) and confirmed stdout output is still exactly one line: `MSE: ...`.
 
+## 2026-03-01 — Target log transform revision (log(1 + shares))
+
+- Tool: Cursor Chat
+- Prompt: "My professor said the MSE is too big; I can use the log form. Please revise it and update README.md and AI_USAGE.md."
+- Output summary: Updated the final model to train on `log(1 + shares)` and inverse-transform predictions back to `shares` for MSE, while keeping `make evaluate` output exactly one line.
+- What I used:
+  - Added target-transform helpers in `scripts/setup.R`:
+    - `transform_target()` for `log1p(shares)`
+    - `inverse_transform_target()` to map predictions back to `shares`
+    - `compute_smearing()` (Duan smearing factor) to reduce bias when back-transforming
+  - Updated cross-validation to tune \(\lambda\) under the log-target approach (`cv_ridge_log1p()`), while still evaluating MSE on the original `shares` scale.
+  - Updated `scripts/train.R` to:
+    - fit ridge on the transformed target
+    - compute and store a smearing factor in the saved model artifact
+  - Updated `scripts/test.R` to:
+    - predict on the transformed scale
+    - inverse-transform predictions back to `shares` using the stored smearing factor
+    - compute and print test MSE on the original scale
+  - Updated `README.md` to describe the log-target choice and how evaluation is done on the original scale.
+- Verification: Re-ran `make evaluate` with a temporary local `data/raw/test.csv` and confirmed stdout is still exactly one line: `MSE: ...`.
+
+## 2026-03-01 — Add RMSE computation (without breaking grader output)
+
+- Tool: Cursor Chat
+- Prompt: "Did you calculate RMSE? If no, add it to the steps/files."
+- Output summary: Added RMSE (\(\sqrt{\text{MSE}}\)) computation to the evaluation script while keeping `make evaluate` stdout exactly one line (`MSE: ...`).
+- What I used:
+  - Updated `scripts/test.R` to compute `rmse <- sqrt(mse)` every run.
+  - Kept the grading contract intact by printing only MSE to stdout.
+  - Added an optional flag `--print-rmse` that prints RMSE to **stderr** (so it does not pollute stdout).
+  - Added a `make metrics` target for convenient local inspection.
+  - Updated `README.md` to document how to view RMSE.
+- Verification: Re-ran `make evaluate` and confirmed stdout is still exactly one line `MSE: ...`.
+

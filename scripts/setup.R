@@ -97,8 +97,41 @@ FINAL_SPEC_NAME <- "poly2"
 FINAL_FEATURE_SPEC <- feature_spec_poly2()
 FINAL_LAMBDA <- 10^3.5
 
+# We fit the model on a transformed target to reduce the influence of extreme
+# outliers. Predictions are transformed back to the original `shares` scale
+# before computing MSE.
+FINAL_TARGET_TRANSFORM <- "log1p" # model log(1 + shares)
+
 # Ridge penalty grid used during model selection (log-spaced)
 LAMBDA_GRID <- 10^seq(-2, 4, length.out = 25)
+
+# -------------------------------------------------------------------------
+# Target transform helpers (log1p + inverse with smearing)
+# -------------------------------------------------------------------------
+
+# Transform shares to the modeling scale.
+transform_target <- function(y_shares, transform = FINAL_TARGET_TRANSFORM) {
+  if (transform == "log1p") {
+    return(log1p(y_shares))
+  }
+  stop("Unknown target transform: ", transform)
+}
+
+# Inverse-transform model-scale predictions back to the shares scale.
+# Uses a (training-estimated) smearing factor to partially correct log-scale bias.
+inverse_transform_target <- function(y_hat_model, smearing = 1, transform = FINAL_TARGET_TRANSFORM) {
+  if (transform == "log1p") {
+    # Guard against extreme exponentiation (should not happen with ridge, but safe).
+    y_hat_model <- pmin(y_hat_model, 50)
+    return(exp(y_hat_model) * smearing - 1)
+  }
+  stop("Unknown target transform: ", transform)
+}
+
+# Duan smearing estimate for log-scale residuals: mean(exp(residual)).
+compute_smearing <- function(y_model, y_hat_model) {
+  mean(exp(y_model - y_hat_model))
+}
 
 # -------------------------------------------------------------------------
 # Data loading + preprocessing helpers
@@ -325,6 +358,66 @@ cv_ridge <- function(x_mat, y, lambdas, k = 5, seed = SEED) {
       pred <- ridge_predict(model, x_val_std)
       pred <- pmax(pred, 0)
       mse_mat[i, f] <- mean((y_val - pred)^2)
+    }
+  }
+
+  data.frame(
+    lambda = lambdas,
+    mse_mean = rowMeans(mse_mat),
+    mse_sd = apply(mse_mat, 1, sd),
+    stringsAsFactors = FALSE
+  )
+}
+
+# K-fold CV for a log1p target transform, evaluated on the original shares scale.
+#
+# Fits ridge on log(1 + shares), then maps predictions back to shares using a
+# fold-specific smearing factor (estimated on the training fold).
+cv_ridge_log1p <- function(x_mat, y_shares, lambdas, k = 5, seed = SEED) {
+  set.seed(seed)
+  n <- length(y_shares)
+  folds <- sample(rep(seq_len(k), length.out = n))
+
+  mse_mat <- matrix(NA_real_, nrow = length(lambdas), ncol = k)
+
+  for (f in seq_len(k)) {
+    idx_val <- folds == f
+    idx_tr <- !idx_val
+
+    x_tr <- x_mat[idx_tr, , drop = FALSE]
+    y_tr_shares <- y_shares[idx_tr]
+    x_val <- x_mat[idx_val, , drop = FALSE]
+    y_val_shares <- y_shares[idx_val]
+
+    y_tr_model <- log1p(y_tr_shares)
+
+    imp <- impute_fit(x_tr)
+    x_tr_imp <- imp$x
+    x_val_imp <- impute_apply(x_val, imp$med)
+
+    std <- standardize_fit(x_tr_imp)
+    x_tr_std <- std$x
+    x_val_std <- standardize_apply(x_val_imp, std$mu, std$sd)
+
+    y_mean <- mean(y_tr_model)
+    y_center <- y_tr_model - y_mean
+    xtx <- crossprod(x_tr_std)
+    xty <- crossprod(x_tr_std, y_center)
+
+    for (i in seq_along(lambdas)) {
+      lambda <- lambdas[i]
+      model <- ridge_fit_from_crossprod(xtx, xty, y_mean, lambda)
+
+      # Smearing factor (log-scale residual correction) estimated on training fold.
+      pred_tr_model <- ridge_predict(model, x_tr_std)
+      smearing <- compute_smearing(y_tr_model, pred_tr_model)
+      if (!is.finite(smearing) || smearing <= 0) smearing <- 1
+
+      pred_val_model <- ridge_predict(model, x_val_std)
+      pred_val_shares <- inverse_transform_target(pred_val_model, smearing = smearing, transform = "log1p")
+      pred_val_shares <- pmax(pred_val_shares, 0)
+
+      mse_mat[i, f] <- mean((y_val_shares - pred_val_shares)^2)
     }
   }
 

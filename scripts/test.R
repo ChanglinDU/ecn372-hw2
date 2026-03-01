@@ -1,6 +1,10 @@
 options(warn = -1)
 options(stringsAsFactors = FALSE)
 
+# Optional flag: print RMSE as well (NOT used by `make evaluate`).
+args <- commandArgs(trailingOnly = TRUE)
+print_rmse <- "--print-rmse" %in% args
+
 # -------------------------------------------------------------------------
 # Test / evaluation script
 #
@@ -50,14 +54,31 @@ if (!is.null(model_obj$feature_names) && length(model_obj$feature_names) == ncol
   }
 }
 
-# Apply training-fitted preprocessing, then predict.
+# Apply training-fitted preprocessing.
 x_imp <- impute_apply(x, model_obj$impute_median)
 x_std <- standardize_apply(x_imp, model_obj$scale_mean, model_obj$scale_sd)
 
-pred <- as.vector(model_obj$intercept + x_std %*% model_obj$beta)
+# Predict on the model scale (possibly transformed target).
+pred_model <- as.vector(model_obj$intercept + x_std %*% model_obj$beta)
+
+# Map predictions back to the original shares scale if a transform was used.
+smearing <- if (!is.null(model_obj$smearing)) model_obj$smearing else 1
+pred <- pred_model
+if (!is.null(model_obj$target_transform) && model_obj$target_transform == "log1p") {
+  pred <- inverse_transform_target(pred_model, smearing = smearing, transform = "log1p")
+}
+
+# Shares cannot be negative.
 pred <- pmax(pred, 0)
 
 # Compute test MSE on the original `shares` scale.
 mse <- mean((spl$y - pred)^2)
+rmse <- sqrt(mse)
 cat(sprintf("MSE: %.2f\n", mse))
+
+# RMSE is useful for interpretation; by default we do NOT print it to stdout
+# because the grading script requires `make evaluate` to print only MSE.
+if (isTRUE(print_rmse)) {
+  cat(sprintf("RMSE: %.2f\n", rmse), file = stderr())
+}
 

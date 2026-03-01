@@ -48,7 +48,8 @@ run_model_selection <- function() {
     keep_idx <- drop_zero_variance_idx(x_raw)
     x <- x_raw[, keep_idx, drop = FALSE]
 
-    cv <- cv_ridge(x, spl$y, lambdas = LAMBDA_GRID, k = 5, seed = SEED)
+    # CV for a log1p target transform, evaluated on the original shares scale.
+    cv <- cv_ridge_log1p(x, spl$y, lambdas = LAMBDA_GRID, k = 5, seed = SEED)
     best_idx <- which.min(cv$mse_mean)
 
     results <- rbind(
@@ -93,17 +94,29 @@ train_final_model <- function() {
   std <- standardize_fit(x_imp)
   x_std <- std$x
 
-  # Closed-form ridge fit on standardized predictors.
-  model <- ridge_fit(x_std, spl$y, FINAL_LAMBDA)
+  # Transform the target to reduce the influence of extreme outliers, then fit ridge
+  # on the transformed scale. Predictions are transformed back in `scripts/test.R`.
+  y_shares <- spl$y
+  y_model <- transform_target(y_shares, transform = FINAL_TARGET_TRANSFORM)
+
+  # Closed-form ridge fit on standardized predictors (on the transformed target).
+  model <- ridge_fit(x_std, y_model, FINAL_LAMBDA)
+
+  # Smearing factor to reduce back-transform bias on the original scale.
+  pred_train_model <- ridge_predict(model, x_std)
+  smearing <- compute_smearing(y_model, pred_train_model)
+  if (!is.finite(smearing) || smearing <= 0) smearing <- 1
 
   # Persist everything needed for deterministic inference on the test set.
   # We store preprocessing stats + coefficient vector (instead of the whole data).
   artifact <- list(
     created_at = as.character(Sys.time()),
     target = TARGET,
+    target_transform = FINAL_TARGET_TRANSFORM,
     feature_spec_name = FINAL_SPEC_NAME,
     feature_spec = FINAL_FEATURE_SPEC,
     lambda = FINAL_LAMBDA,
+    smearing = smearing,
     keep_idx = keep_idx,
     feature_names = colnames(x),
     impute_median = imp$med,

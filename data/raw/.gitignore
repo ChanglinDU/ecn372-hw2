@@ -2,3 +2,7 @@
 *
 !.gitignore
 
+# Keep this directory in git, but ignore raw data files (including grader `test.csv`).
+*
+!.gitignore
+
